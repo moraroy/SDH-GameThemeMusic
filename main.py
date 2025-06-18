@@ -5,10 +5,8 @@ import glob
 import json
 import os
 import ssl
-
 import aiohttp
 import certifi
-
 import decky  # type: ignore
 from settings import SettingsManager  # type: ignore
 
