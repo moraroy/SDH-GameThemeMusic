@@ -10,7 +10,6 @@ import certifi
 import decky  # type: ignore
 from settings import SettingsManager  # type: ignore
 
-
 class Plugin:
     yt_process: asyncio.subprocess.Process | None = None
     # We need this lock to make sure the process output isn't read by two concurrent readers at once.
