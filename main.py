@@ -46,6 +46,10 @@ class Plugin:
         return self.settings.getSetting(key, default)
 
     async def search_yt(self, term: str):
+        yt_dlp_path = f"{decky.DECKY_PLUGIN_DIR}/bin/yt-dlp"
+        if os.path.exists(yt_dlp_path):
+            os.chmod(yt_dlp_path, 0o755)
+
         # Add a check to make sure the process is still running before trying to terminate to avoid ProcessLookupError
         if self.yt_process is not None and self.yt_process.returncode is None:
             self.yt_process.terminate()
@@ -63,6 +67,8 @@ class Plugin:
             stdout=asyncio.subprocess.PIPE,
             # The returned JSON can get rather big, so we set a generous limit of 10 MB.
             limit=10 * 1024**2,
+            env={**os.environ, 'LD_LIBRARY_PATH': '/usr/lib:/lib'},
+
         )
 
     async def next_yt_result(self):
@@ -113,6 +119,7 @@ class Plugin:
             "-f",
             "bestaudio",
             stdout=asyncio.subprocess.PIPE,
+            env={**os.environ, 'LD_LIBRARY_PATH': '/usr/lib:/lib'},
         )
         if (
             result.stdout is None
@@ -135,6 +142,7 @@ class Plugin:
             "%(id)s.%(ext)s",
             "-P",
             self.music_path,
+            env={**os.environ, 'LD_LIBRARY_PATH': '/usr/lib:/lib'},
         )
         await process.communicate()
 
