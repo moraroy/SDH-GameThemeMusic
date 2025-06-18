@@ -10,7 +10,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/OMGDuke/SDH-GameThemeMusic.git"
+    "url": "git+https://github.com/moraroy/SDH-GameThemeMusic.git"
   },
   "keywords": [
     "decky",
@@ -19,12 +19,12 @@
     "steam-deck",
     "deck"
   ],
-  "author": "OMGDuke",
+  "author": "OMGDuke, moraroy",
   "license": "GPL-2.0-or-later",
   "bugs": {
-    "url": "https://github.com/OMGDuke/SDH-GameThemeMusic/issues"
+    "url": "https://github.com/moraroy/SDH-GameThemeMusic/issues"
   },
-  "homepage": "https://github.com/OMGDuke/SDH-GameThemeMusic#readme",
+  "homepage": "https://github.com/moraroy/SDH-GameThemeMusic#readme",
   "remote_binary": [
     {
       "name": "yt-dlp",

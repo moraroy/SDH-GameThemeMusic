@@ -318,9 +318,9 @@ export default function Index() {
         </PanelSectionRow>
       </PanelSection>
       <PanelSection title={t('extras')}>
-        <PanelSocialButton icon={<SiKofi fill="#FF5E5B" />} url="https://ko-fi.com/OMGDuke">Ko-fi</PanelSocialButton>
+        <PanelSocialButton icon={<SiKofi fill="#FF5E5B" />} url="https://ko-fi.com/moraroy">Ko-fi</PanelSocialButton>
         <PanelSocialButton icon={<SiDiscord fill="#5865F2" />} url="https://deckbrew.xyz/discord">Discord</PanelSocialButton>
-        <PanelSocialButton icon={<SiGithub fill="#f5f5f5" />} url="https://github.com/OMGDuke/SDH-GameThemeMusic/">Github</PanelSocialButton>
+        <PanelSocialButton icon={<SiGithub fill="#f5f5f5" />} url="https://github.com/moraroy/SDH-GameThemeMusic/">Github</PanelSocialButton>
         <PanelSocialButton icon={<SiCrowdin fill="#FFFFFF" />} url="https://crowdin.com/project/sdh-gamethememusic">{t('helpTranslate')}</PanelSocialButton>
       </PanelSection>
     </div>
