@@ -143,6 +143,12 @@ class Plugin:
         )
         await process.communicate()
 
+        #simple m4a fix
+        original_path = os.path.join(self.music_path, f"{id}.m4a")
+        renamed_path = os.path.join(self.music_path, f"{id}.webm")
+        if os.path.exists(original_path):
+            os.rename(original_path, renamed_path)
+
     async def download_url(self, url: str, id: str):
         async with aiohttp.ClientSession() as session:
             res = await session.get(url, ssl=self.ssl_context)
