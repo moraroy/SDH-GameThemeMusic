@@ -1,72 +1,84 @@
 import asyncio
 import base64
 import datetime
-import glob
 import json
 import os
 import ssl
 import aiohttp
 import certifi
-import decky  # type: ignore
+import logging
+import platform
+import shutil
+
+import decky
 from settings import SettingsManager  # type: ignore
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+def get_ytdlp_path() -> str:
+    binary = "yt-dlp.exe" if platform.system() == "Windows" else "yt-dlp"
+    return os.path.join(decky.DECKY_PLUGIN_DIR, "bin", binary)
+
 
 class Plugin:
     yt_process: asyncio.subprocess.Process | None = None
-    # We need this lock to make sure the process output isn't read by two concurrent readers at once.
     yt_process_lock = asyncio.Lock()
     music_path = f"{decky.DECKY_PLUGIN_RUNTIME_DIR}/music"
     cache_path = f"{decky.DECKY_PLUGIN_RUNTIME_DIR}/cache"
     ssl_context = ssl.create_default_context(cafile=certifi.where())
 
     async def _main(self):
+        logger.info("Initializing plugin...")
         self.settings = SettingsManager(
             name="config", settings_directory=decky.DECKY_PLUGIN_SETTINGS_DIR
         )
+        logger.info("Settings loaded.")
 
     async def _unload(self):
-        # Add a check to make sure the process is still running before trying to terminate to avoid ProcessLookupError
         if self.yt_process is not None and self.yt_process.returncode is None:
+            logger.info("Terminating yt_process...")
             self.yt_process.terminate()
-            # Wait for process to terminate.
             async with self.yt_process_lock:
                 try:
-                    # Allow up to 5 seconds for termination.
                     await asyncio.wait_for(self.yt_process.communicate(), timeout=5)
                 except TimeoutError:
-                    # Otherwise, send SIGKILL.
+                    logger.warning("yt_process timeout. Killing process.")
                     self.yt_process.kill()
 
     async def set_setting(self, key, value):
+        logger.info(f"Setting config key: {key} = {value}")
         self.settings.setSetting(key, value)
 
     async def get_setting(self, key, default):
-        return self.settings.getSetting(key, default)
+        value = self.settings.getSetting(key, default)
+        logger.info(f"Retrieved config key: {key} = {value}")
+        return value
 
     async def search_yt(self, term: str):
-        yt_dlp_path = f"{decky.DECKY_PLUGIN_DIR}/bin/yt-dlp"
-        if os.path.exists(yt_dlp_path):
-            os.chmod(yt_dlp_path, 0o755)
+        logger.info(f"Searching YouTube for: {term}")
+        ytdlp_path = get_ytdlp_path()
+        if os.path.exists(ytdlp_path):
+            os.chmod(ytdlp_path, 0o755)
 
-        # Add a check to make sure the process is still running before trying to terminate to avoid ProcessLookupError
         if self.yt_process is not None and self.yt_process.returncode is None:
+            logger.info("Terminating previous yt_process...")
             self.yt_process.terminate()
-            # Wait for process to terminate.
             async with self.yt_process_lock:
                 await self.yt_process.communicate()
+
         self.yt_process = await asyncio.create_subprocess_exec(
-            f"{decky.DECKY_PLUGIN_DIR}/bin/yt-dlp",
+            ytdlp_path,
             f"ytsearch10:{term}",
             "-j",
-            "-f",
-            "bestaudio",
-            "--match-filters",
-            f"duration<?{20*60}",  # 20 minutes is too long.
+            "-f", "bestaudio",
+            "--match-filters", f"duration<?{20*60}",
             stdout=asyncio.subprocess.PIPE,
-            # The returned JSON can get rather big, so we set a generous limit of 10 MB.
             limit=10 * 1024**2,
             env={**os.environ, 'LD_LIBRARY_PATH': '/usr/lib:/lib'},
-
         )
+        logger.info("yt-dlp search process started.")
 
     async def next_yt_result(self):
         async with self.yt_process_lock:
@@ -75,7 +87,9 @@ class Plugin:
                 or not (output := self.yt_process.stdout)
                 or not (line := (await output.readline()).strip())
             ):
+                logger.info("No more results from yt_process.")
                 return None
+            logger.debug(f"Received result line: {line[:100]}...")
             entry = json.loads(line)
             return self.entry_to_info(entry)
 
@@ -89,96 +103,119 @@ class Plugin:
         }
 
     def local_match(self, id: str) -> str | None:
-        local_matches = [
-            x for x in glob.glob(f"{self.music_path}/{id}.*") if os.path.isfile(x)
-        ]
-        if len(local_matches) == 0:
-            return None
-
-        assert (
-            len(local_matches) == 1
-        ), "More than one downloaded audio with same ID found."
-        return local_matches[0]
+        logger.info(f"Looking for local match for ID: {id}")
+        try:
+            for file in os.listdir(self.music_path):
+                if os.path.isfile(os.path.join(self.music_path, file)) and file.startswith(id + "."):
+                    logger.info(f"Local match found: {file}")
+                    return os.path.join(self.music_path, file)
+        except FileNotFoundError:
+            logger.warning(f"Music path not found: {self.music_path}")
+        logger.info("No local match found.")
+        return None
 
     async def single_yt_url(self, id: str):
         local_match = self.local_match(id)
-        if local_match is not None:
-            # The audio has already been downloaded, so we can just use that one.
-            # However, we cannot use local paths in the <audio> elements, so we'll
-            # convert this to a base64-encoded data URL first.
+        if local_match:
             extension = local_match.split(".")[-1]
+            logger.info(f"Serving base64 encoded audio from local file: {local_match}")
             with open(local_match, "rb") as file:
                 return f"data:audio/{extension};base64,{base64.b64encode(file.read()).decode()}"
+
+        logger.info(f"No local file. Fetching yt-dlp info for: {id}")
+        ytdlp_path = get_ytdlp_path()
         result = await asyncio.create_subprocess_exec(
-            f"{decky.DECKY_PLUGIN_DIR}/bin/yt-dlp",
+            ytdlp_path,
             f"{id}",
             "-j",
-            "-f",
-            "bestaudio",
+            "-f", "bestaudio",
             stdout=asyncio.subprocess.PIPE,
             env={**os.environ, 'LD_LIBRARY_PATH': '/usr/lib:/lib'},
         )
-        if (
-            result.stdout is None
-            or len(output := (await result.stdout.read()).strip()) == 0
-        ):
+        if result.stdout is None or not (output := (await result.stdout.read()).strip()):
+            logger.warning("yt-dlp returned no output.")
             return None
         entry = json.loads(output)
         return entry["url"]
 
     async def download_yt_audio(self, id: str):
-        if self.local_match(id) is not None:
-            # Already downloaded—there's nothing we need to do.
+        if self.local_match(id):
+            logger.info(f"Audio already downloaded for ID: {id}")
             return
+
+        logger.info(f"Downloading audio for ID: {id}")
+        ytdlp_path = get_ytdlp_path()
         process = await asyncio.create_subprocess_exec(
-            f"{decky.DECKY_PLUGIN_DIR}/bin/yt-dlp",
+            ytdlp_path,
             f"{id}",
-            "-f",
-            "bestaudio",
-            "-o",
-            "%(id)s.%(ext)s",
-            "-P",
-            self.music_path,
+            "-f", "bestaudio",
+            "-o", "%(id)s.%(ext)s",
+            "-P", self.music_path,
             env={**os.environ, 'LD_LIBRARY_PATH': '/usr/lib:/lib'},
         )
         await process.communicate()
 
-        #simple m4a fix
         original_path = os.path.join(self.music_path, f"{id}.m4a")
         renamed_path = os.path.join(self.music_path, f"{id}.webm")
         if os.path.exists(original_path):
+            logger.info(f"Renaming {original_path} to {renamed_path}")
             os.rename(original_path, renamed_path)
 
     async def download_url(self, url: str, id: str):
+        logger.info(f"Downloading file from URL: {url}")
         async with aiohttp.ClientSession() as session:
             res = await session.get(url, ssl=self.ssl_context)
             res.raise_for_status()
-            with open(f"{self.music_path}/{id}.webm", "wb") as file:
+            file_path = os.path.join(self.music_path, f"{id}.webm")
+            with open(file_path, "wb") as file:
                 async for chunk in res.content.iter_chunked(1024):
                     file.write(chunk)
+            logger.info(f"Download complete: {file_path}")
 
     async def clear_downloads(self):
-        for file in glob.glob(f"{self.music_path}/*"):
-            if os.path.isfile(file):
-                os.remove(file)
+        logger.info("Clearing all downloaded music files...")
+        try:
+            for file in os.listdir(self.music_path):
+                full_path = os.path.join(self.music_path, file)
+                if os.path.isfile(full_path):
+                    logger.info(f"Removing file: {full_path}")
+                    os.remove(full_path)
+        except FileNotFoundError:
+            logger.warning(f"Music path not found: {self.music_path}")
 
     async def export_cache(self, cache: dict):
         os.makedirs(self.cache_path, exist_ok=True)
         filename = f"backup-{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}.json"
-        with open(f"{self.cache_path}/{filename}", "w") as file:
+        full_path = os.path.join(self.cache_path, filename)
+        with open(full_path, "w") as file:
             json.dump(cache, file)
+        logger.info(f"Cache exported to {full_path}")
 
     async def list_cache_backups(self):
-        return [
-            file.split("/")[-1].rsplit(".", 1)[0]
-            for file in glob.glob(f"{self.cache_path}/*")
-        ]
+        logger.info("Listing cache backup files...")
+        try:
+            return [
+                file.rsplit(".", 1)[0]
+                for file in os.listdir(self.cache_path)
+                if os.path.isfile(os.path.join(self.cache_path, file))
+            ]
+        except FileNotFoundError:
+            logger.warning(f"Cache path not found: {self.cache_path}")
+            return []
 
     async def import_cache(self, name: str):
-        with open(f"{self.cache_path}/{name}.json", "r") as file:
+        path = os.path.join(self.cache_path, f"{name}.json")
+        logger.info(f"Importing cache from {path}")
+        with open(path, "r") as file:
             return json.load(file)
 
     async def clear_cache(self):
-        for file in glob.glob(f"{self.cache_path}/*"):
-            if os.path.isfile(file):
-                os.remove(file)
+        logger.info("Clearing all cache files...")
+        try:
+            for file in os.listdir(self.cache_path):
+                full_path = os.path.join(self.cache_path, file)
+                if os.path.isfile(full_path):
+                    logger.info(f"Removing file: {full_path}")
+                    os.remove(full_path)
+        except FileNotFoundError:
+            logger.warning(f"Cache path not found: {self.cache_path}")
